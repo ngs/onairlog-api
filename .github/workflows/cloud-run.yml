@@ -42,5 +42,5 @@ jobs:
           --image "gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA" \
           --platform "managed" \
           --set-cloudsql-instances "${{ secrets.CLOUDSQL_INSTANCES }}" \
-          --set-env-vars="DATABASE_URL=${{ secrets.DATABASE_URI }}" \
+          --set-env-vars="DATABASE_URI=${{ secrets.DATABASE_URI }}" \
           --allow-unauthenticated
