@@ -28,6 +28,10 @@ func main() {
 		log.Fatal(err)
 		return
 	}
+	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("OK"))
+	})
 	r.HandleFunc("/siri.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		var song Song
