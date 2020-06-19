@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/gorm"
@@ -26,30 +27,20 @@ type App struct {
 }
 
 func main() {
-	r := mux.NewRouter()
 	db, err := gorm.Open("mysql", mustGetenv("DATABASE_URI"))
 	defer db.Close()
-	app := App{DB: db}
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
 
-	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte("OK"))
-	})
-
+	app := App{DB: db}
+	r := mux.NewRouter()
+	r.HandleFunc("/", app.HandleRoot)
 	r.HandleFunc("/songs", app.HandleSongs).Queries("since", "{since}")
 	r.HandleFunc("/songs", app.HandleSongs)
-
-	r.HandleFunc("/siri", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		var song Song
-		db.Order("time desc").Last(&song)
-		w.Write([]byte(fmt.Sprintf("%s の %s が %s に放送されました", song.Artist, song.Title, (*song.Time).Format("15時4分"))))
-	})
-
+	r.HandleFunc("/songs/{id}", app.HandleSong)
+	r.HandleFunc("/siri", app.HandleSiri)
 	http.Handle("/", r)
 
 	port := os.Getenv("PORT")
@@ -58,6 +49,11 @@ func main() {
 	}
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", port), nil))
+}
+
+func (app App) HandleRoot(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte("OK"))
 }
 
 func (app App) HandleSongs(w http.ResponseWriter, r *http.Request) {
@@ -71,4 +67,25 @@ func (app App) HandleSongs(w http.ResponseWriter, r *http.Request) {
 	data, _ := json.Marshal(songs)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(data)
+}
+
+func (app App) HandleSong(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		w.WriteHeader(400)
+		w.Write([]byte(fmt.Sprintf("%s", err)))
+		return
+	}
+	var song Song
+	app.DB.Order("time desc").First(&song, id)
+	data, _ := json.Marshal(song)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(data)
+}
+
+func (app App) HandleSiri(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	var song Song
+	app.DB.Order("time desc").Last(&song)
+	w.Write([]byte(fmt.Sprintf("%s の %s が %s に放送されました", song.Artist, song.Title, (*song.Time).Format("15時4分"))))
 }
