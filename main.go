@@ -87,5 +87,12 @@ func (app App) HandleSiri(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	var song Song
 	app.DB.Order("time desc").Last(&song)
-	w.Write([]byte(fmt.Sprintf("%s の %s が %s に放送されました", song.Artist, song.Title, (*song.Time).Format("3時4分"))))
+	t := *song.Time
+	var format string
+	if t.Hour() <= 12 {
+		format = "午前3時4分"
+	} else {
+		format = "午後3時4分"
+	}
+	w.Write([]byte(fmt.Sprintf("%s の %s が %s に放送されました", song.Artist, song.Title, t.Format(format))))
 }
