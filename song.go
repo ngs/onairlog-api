@@ -2,13 +2,10 @@ package main
 
 import (
 	"time"
-
-	"github.com/jinzhu/gorm"
 )
 
 type Song struct {
-	gorm.Model
-	Time   *time.Time
-	Artist string
-	Title  string
+	Time   *time.Time `json:"time"`
+	Artist string     `json:"artist"`
+	Title  string     `json:"title"`
 }
