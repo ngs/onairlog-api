@@ -36,7 +36,11 @@ type App struct {
 
 func main() {
 	ctx := context.Background()
-	fs, err := firestore.NewClient(ctx, mustGetenv("PROJECT_ID"))
+	db := os.Getenv("FIRESTORE_DATABASE")
+	if db == "" {
+		db = firestore.DefaultDatabaseID
+	}
+	fs, err := firestore.NewClientWithDatabase(ctx, mustGetenv("PROJECT_ID"), db)
 	if err != nil {
 		log.Fatalf("firestore: %v", err)
 	}
