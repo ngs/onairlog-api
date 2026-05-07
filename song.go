@@ -1,12 +1,10 @@
 package main
 
-import (
-	"time"
-)
+import "time"
 
 type Song struct {
-	ID     int        `json:"id"`
-	Time   *time.Time `json:"time"`
-	Artist string     `json:"artist"`
-	Title  string     `json:"title"`
+	ID     string     `firestore:"-" json:"id"`
+	Time   *time.Time `firestore:"time" json:"time"`
+	Artist string     `firestore:"artist" json:"artist"`
+	Title  string     `firestore:"title" json:"title"`
 }
