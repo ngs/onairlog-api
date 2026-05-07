@@ -1,17 +1,25 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
+	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/gorilla/mux"
-	"github.com/jinzhu/gorm"
+	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
 
-	_ "github.com/jinzhu/gorm/dialects/mysql"
+const (
+	collectionSongs = "songs"
+	pageLimit       = 20
 )
 
 func mustGetenv(k string) string {
@@ -23,18 +31,22 @@ func mustGetenv(k string) string {
 }
 
 type App struct {
-	DB *gorm.DB
+	FS *firestore.Client
 }
 
 func main() {
-	db, err := gorm.Open("mysql", mustGetenv("DATABASE_URI"))
-	defer db.Close()
-	if err != nil {
-		log.Fatal(err)
-		return
+	ctx := context.Background()
+	db := os.Getenv("FIRESTORE_DATABASE")
+	if db == "" {
+		db = firestore.DefaultDatabaseID
 	}
+	fs, err := firestore.NewClientWithDatabase(ctx, mustGetenv("PROJECT_ID"), db)
+	if err != nil {
+		log.Fatalf("firestore: %v", err)
+	}
+	defer fs.Close()
 
-	app := App{DB: db}
+	app := App{FS: fs}
 	r := mux.NewRouter()
 	r.HandleFunc("/", app.HandleRoot)
 	r.HandleFunc("/songs", app.HandleSongs).Queries("since", "{since}")
@@ -56,37 +68,73 @@ func (app App) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func (app App) HandleSongs(w http.ResponseWriter, r *http.Request) {
-	since := mux.Vars(r)["since"]
-	result := app.DB.Order("time desc").Limit(20)
-	if since != "" {
-		result = result.Where("time < ?", since)
+func parseSince(s string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
 	}
-	var songs []Song
-	result.Find(&songs)
-	data, _ := json.Marshal(songs)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write(data)
+	return time.Time{}, fmt.Errorf("invalid since: %q", s)
+}
+
+func (app App) HandleSongs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := app.FS.Collection(collectionSongs).
+		OrderBy("time", firestore.Desc).
+		Limit(pageLimit)
+	if since := mux.Vars(r)["since"]; since != "" {
+		t, err := parseSince(since)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		q = q.Where("time", "<", t)
+	}
+	songs, err := fetchSongs(ctx, q)
+	if err != nil {
+		log.Printf("HandleSongs: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, songs)
 }
 
 func (app App) HandleSong(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	ctx := r.Context()
+	id := mux.Vars(r)["id"]
+	doc, err := app.FS.Collection(collectionSongs).Doc(id).Get(ctx)
 	if err != nil {
-		w.WriteHeader(400)
-		w.Write([]byte(fmt.Sprintf("%s", err)))
+		if status.Code(err) == codes.NotFound {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("HandleSong: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var song Song
-	app.DB.Order("time desc").First(&song, id)
-	data, _ := json.Marshal(song)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write(data)
+	if err := doc.DataTo(&song); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	song.ID = doc.Ref.ID
+	writeJSON(w, song)
 }
 
 func (app App) HandleSiri(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	var song Song
-	app.DB.Order("time desc").Last(&song)
+	ctx := r.Context()
+	q := app.FS.Collection(collectionSongs).OrderBy("time", firestore.Desc).Limit(1)
+	songs, err := fetchSongs(ctx, q)
+	if err != nil {
+		log.Printf("HandleSiri: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(songs) == 0 || songs[0].Time == nil {
+		http.Error(w, "no song", http.StatusNotFound)
+		return
+	}
+	song := songs[0]
 	t := *song.Time
 	var format string
 	if t.Hour() <= 12 {
@@ -94,5 +142,33 @@ func (app App) HandleSiri(w http.ResponseWriter, r *http.Request) {
 	} else {
 		format = "午後3時4分"
 	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(fmt.Sprintf("%s の %s が %s に放送されました", song.Artist, song.Title, t.Format(format))))
+}
+
+func fetchSongs(ctx context.Context, q firestore.Query) ([]Song, error) {
+	iter := q.Documents(ctx)
+	defer iter.Stop()
+	songs := []Song{}
+	for {
+		doc, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var s Song
+		if err := doc.DataTo(&s); err != nil {
+			return nil, err
+		}
+		s.ID = doc.Ref.ID
+		songs = append(songs, s)
+	}
+	return songs, nil
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(v)
 }
