@@ -23,13 +23,16 @@ type Song struct {
 	CanonicalTitle  string                 `firestore:"canonicalTitle,omitempty" json:"canonicalTitle,omitempty"`
 	CanonicalArtist string                 `firestore:"canonicalArtist,omitempty" json:"canonicalArtist,omitempty"`
 	CanonicalKey    string                 `firestore:"canonicalKey,omitempty" json:"canonicalKey,omitempty"`
-	ITunesResponse  map[string]interface{} `firestore:"itunesResponse,omitempty" json:"-"`
+	// Pre-computed by the Sync function so callers don't have to dig
+	// into ITunesResponse. Older docs may have these fields empty even
+	// when ITunesResponse is populated, so hydrate falls back.
+	ArtworkURL     string                 `firestore:"artworkUrl,omitempty" json:"artworkUrl,omitempty"`
+	ITunesURL      string                 `firestore:"itunesUrl,omitempty" json:"itunesUrl,omitempty"`
+	ITunesResponse map[string]interface{} `firestore:"itunesResponse,omitempty" json:"-"`
 
 	// Derived for the JSON response.
 	DisplayTitle  string `firestore:"-" json:"displayTitle,omitempty"`
 	DisplayArtist string `firestore:"-" json:"displayArtist,omitempty"`
-	ITunesURL     string `firestore:"-" json:"itunesUrl,omitempty"`
-	ArtworkURL    string `firestore:"-" json:"artworkUrl,omitempty"`
 }
 
 // hydrate fills the derived display fields after a Song is loaded
@@ -45,10 +48,12 @@ func (s *Song) hydrate() {
 	} else {
 		s.DisplayArtist = s.Artist
 	}
-	if s.ITunesTrackID > 0 {
+	if s.ITunesURL == "" && s.ITunesTrackID > 0 {
 		s.ITunesURL = fmt.Sprintf("https://music.apple.com/jp/song/%d", s.ITunesTrackID)
 	}
-	s.ArtworkURL = artworkFromITunes(s.ITunesResponse)
+	if s.ArtworkURL == "" {
+		s.ArtworkURL = artworkFromITunes(s.ITunesResponse)
+	}
 }
 
 func artworkFromITunes(itunes map[string]interface{}) string {
