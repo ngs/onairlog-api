@@ -164,6 +164,7 @@ func (app App) HandleSong(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	song.ID = doc.Ref.ID
+	song.hydrate()
 	writeJSON(w, song)
 }
 
@@ -214,11 +215,12 @@ func (app App) HandleSiri(w http.ResponseWriter, r *http.Request) {
 		if doc, err := app.FS.Collection(songsCollection).Doc(play.SongID).Get(ctx); err == nil {
 			var song Song
 			if err := doc.DataTo(&song); err == nil {
-				if song.Title != "" {
-					title = song.Title
+				song.hydrate()
+				if song.DisplayTitle != "" {
+					title = song.DisplayTitle
 				}
-				if song.Artist != "" {
-					artist = song.Artist
+				if song.DisplayArtist != "" {
+					artist = song.DisplayArtist
 				}
 			}
 		}
@@ -274,6 +276,7 @@ func fetchSongs(ctx context.Context, q firestore.Query) ([]Song, error) {
 			return nil, err
 		}
 		s.ID = doc.Ref.ID
+		s.hydrate()
 		songs = append(songs, s)
 	}
 	return songs, nil
